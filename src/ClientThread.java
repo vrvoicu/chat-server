@@ -1,16 +1,18 @@
 import socketmessage.SocketMessage;
 
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
+import java.util.List;
 import java.util.Map;
 
 public class ClientThread implements Runnable{
 
     private Thread me;
     private boolean run = true;
+
+    private Server server;
 
     private Socket socket;
 
@@ -19,7 +21,11 @@ public class ClientThread implements Runnable{
 
     private String email;
 
-    public ClientThread(Socket socket){
+
+    public ClientThread(Socket socket, Server server){
+
+        this.server = server;
+
         this.socket = socket;
 
         try {
@@ -51,22 +57,52 @@ public class ClientThread implements Runnable{
 
                     map = socketMessage.getMap();
 
-                    this.email = map.get("email");
+                    String email = map.get("email");
+
+                    if(!server.isEmailRegistered(email)) {
+
+                        this.email = map.get("email");
+                        sendLoginResponse(true);
+
+                        System.out.println("user registered with id: " + email);
+
+                        continue;
+
+                    }
+
+                    sendLoginResponse(false);
 
                 }
                 else if(socketMessage.getRequestType() == SocketMessage.REQUEST_TYPE_FRIENDS_LIST){
 
+                    List<String> list = server.getClientsEmailsList(this.email);
+//
+                    sendFriendsListResponse(list);
 
                 }
-                else if(socketMessage.getRequestType() == SocketMessage.REQUEST_TYPE_SEND_CHAT_MESSAGE){
+                else if(socketMessage.getRequestType() == SocketMessage.REQUEST_TYPE_SEND_CHAT_MESSAGE) {
+
 
                     map = socketMessage.getMap();
 
-                    System.out.println(map.get("message"));
+                    String to = map.get("to");
+                    String message = map.get("message");
+
+                    server.sendMessage(to, message);
                 }
 
             }
-            catch (Exception ex){
+            catch (IOException e){
+
+                e.printStackTrace();
+
+                stopThread();
+
+                server.removeClientThread(this);
+
+            } catch (ClassNotFoundException e) {
+
+                e.printStackTrace();
 
             }
         }
@@ -75,18 +111,76 @@ public class ClientThread implements Runnable{
 
     public void sendMessage(String message){
 
+        System.out.println("sendMessage");
+
         SocketMessage socketMessage = new SocketMessage();
         socketMessage.setResponseType(SocketMessage.RESPONSE_TYPE_SEND_CHAT_MESSAGE);
         socketMessage.getMap().put("message", message);
+
+        sendSocketMessage(socketMessage);
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    private void sendLoginResponse(boolean success){
+
+        SocketMessage socketMessage = new SocketMessage();
+
+        socketMessage.setResponseType(SocketMessage.RESPONSE_TYPE_LOGIN);
+
+        if(success) {
+
+            socketMessage.getMap().put("result", "success");
+
+        }
+
+        if(!success){
+
+            socketMessage.getMap().put("result", "fail");
+            socketMessage.getMap().put("message", "Email already registered!");
+
+        }
+
+        sendSocketMessage(socketMessage);
+
+        server.updateFriendsLists();
+
+    }
+
+    public void sendFriendsListResponse(List<String> list){
+
+        SocketMessage socketMessage = new SocketMessage();
+
+        socketMessage.setResponseType(SocketMessage.RESPONSE_TYPE_FRIENDS_LIST);
+
+        String emails = "";
+
+        for (String email: list) {
+            emails += email + ";";
+        }
+
+        socketMessage.getMap().put("list", emails);
+
+        sendSocketMessage(socketMessage);
+    }
+
+    private void sendSocketMessage(SocketMessage socketMessage){
 
         try {
             oos.writeObject(socketMessage);
         } catch (IOException e) {
             e.printStackTrace();
+
+            stopThread();
+
+            server.removeClientThread(this);
         }
+
     }
 
-    public String getEmail() {
-        return email;
+    private void stopThread(){
+        run = false;
     }
 }
